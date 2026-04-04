@@ -1,0 +1,15 @@
+export const colors = {
+  bgDark: '#0A1628',
+  bgMid: '#0D2040',
+  bgCard: '#0F2744',
+  accent: '#4CAF50',
+  accentLight: '#6DD86F',
+  white: '#FFFFFF',
+  whiteAlpha80: 'rgba(255,255,255,0.8)',
+  whiteAlpha50: 'rgba(255,255,255,0.5)',
+  whiteAlpha30: 'rgba(255,255,255,0.3)',
+  whiteAlpha20: 'rgba(255,255,255,0.2)',
+  whiteAlpha10: 'rgba(255,255,255,0.1)',
+  cardBorder: 'rgba(255,255,255,0.08)',
+  navBg: 'rgba(10, 22, 40, 0.95)',
+};
