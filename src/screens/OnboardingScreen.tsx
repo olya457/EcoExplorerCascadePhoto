@@ -104,7 +104,7 @@ export default function OnboardingScreen() {
       <View style={styles.header}>
         <Text style={styles.titleText}>{SLIDES[currentIndex].title}</Text>
         <TouchableOpacity onPress={() => navigation.replace('Home')} activeOpacity={0.8}>
-          <Text style={styles.skipText}>Skip &gt;</Text>
+     
         </TouchableOpacity>
       </View>
 

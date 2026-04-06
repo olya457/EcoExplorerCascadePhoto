@@ -5,19 +5,15 @@ import {
   Image,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
   Dimensions,
   StatusBar,
-  Share,
   ScrollView,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors } from '../theme/colors';
-import { QUIZ_QUESTIONS, getWaterfallsByTags } from '../data';
-import type { QuizTag, Waterfall, QuizQuestion } from '../data';
+import { QUIZ_QUESTIONS } from '../data';
+import type { QuizQuestion } from '../data';
 
 const { width, height } = Dimensions.get('window');
 
@@ -25,163 +21,151 @@ const isVerySmall = height < 680;
 const isSmall = height < 760;
 
 const QUESTIONS_PER_LEVEL = 5;
-const TOTAL_LEVELS = Math.ceil(QUIZ_QUESTIONS.length / QUESTIONS_PER_LEVEL);
-
-const STORAGE_CURRENT_LEVEL = 'quiz_current_level';
-const STORAGE_UNLOCKED_LEVEL = 'quiz_unlocked_level';
+const TOTAL_LEVELS = 10;
 
 type Step = 'intro' | 'question' | 'results';
+type LevelQuestion = QuizQuestion & { correctOptionIndex: number };
 
-const EMPTY_SCORES: Record<QuizTag, number> = {
-  accessible: 0,
-  easy: 0,
-  mountain: 0,
-  wild: 0,
-  adventure: 0,
-};
+function shuffleArray<T>(array: T[]): T[] {
+  const copy = [...array];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
 
-const CORRECT_OPTION_INDEXES: number[] = [
-  0, 1, 1, 0, 2,
-  0, 2, 1, 1, 0,
-  2, 1, 3, 1, 2,
-  1, 2, 3, 2, 2,
-  3, 2, 1, 3, 1,
-  2, 0, 1, 0, 2,
-  2, 1, 3, 2, 2,
-  3, 1, 2, 3, 1,
-  2, 2, 2, 3, 2,
-  1, 2, 3, 2, 3,
-];
+function generateLevelQuestions(level: number): LevelQuestion[] {
+  const pool = shuffleArray(QUIZ_QUESTIONS);
+  const uniqueQuestions = pool.slice(0, QUESTIONS_PER_LEVEL);
+
+  return uniqueQuestions.map((question, index) => {
+    const originalCorrectOption =
+      question.options[(level + index) % question.options.length];
+
+    const otherOptions = question.options.filter(
+      (option) =>
+        !(
+          option.label === originalCorrectOption.label &&
+          option.tag === originalCorrectOption.tag
+        )
+    );
+
+    const normalizedOptions = shuffleArray([
+      originalCorrectOption,
+      ...otherOptions,
+    ]);
+
+    const correctOptionIndex = normalizedOptions.findIndex(
+      (option) =>
+        option.label === originalCorrectOption.label &&
+        option.tag === originalCorrectOption.tag
+    );
+
+    return {
+      ...question,
+      options: normalizedOptions,
+      correctOptionIndex,
+    };
+  });
+}
 
 export default function QuizScreen() {
-  const navigation = useNavigation<any>();
-
-  const [isReady, setIsReady] = useState(false);
   const [step, setStep] = useState<Step>('intro');
   const [currentLevel, setCurrentLevel] = useState(1);
-  const [unlockedLevel, setUnlockedLevel] = useState(1);
+  const [questions, setQuestions] = useState<LevelQuestion[]>([]);
   const [qIndex, setQIndex] = useState(0);
-  const [scores, setScores] = useState<Record<QuizTag, number>>({ ...EMPTY_SCORES });
-  const [results, setResults] = useState<Waterfall[]>([]);
   const [correctAnswers, setCorrectAnswers] = useState(0);
   const [selectedAnswerIndex, setSelectedAnswerIndex] = useState<number | null>(null);
 
-  const levelQuestions = useMemo<QuizQuestion[]>(() => {
-    const start = (currentLevel - 1) * QUESTIONS_PER_LEVEL;
-    return QUIZ_QUESTIONS.slice(start, start + QUESTIONS_PER_LEVEL);
-  }, [currentLevel]);
-
-  const currentQ = levelQuestions[qIndex];
-
-  const absoluteQuestionIndex = useMemo(() => {
-    return (currentLevel - 1) * QUESTIONS_PER_LEVEL + qIndex;
-  }, [currentLevel, qIndex]);
-
-  const correctOptionIndex = CORRECT_OPTION_INDEXES[absoluteQuestionIndex] ?? 0;
-
-  const progressPercent = useMemo(() => {
-    return levelQuestions.length > 0 ? ((qIndex + 1) / levelQuestions.length) * 100 : 0;
-  }, [qIndex, levelQuestions.length]);
-
-  const loadProgress = useCallback(async () => {
-    try {
-      const savedCurrentLevel = await AsyncStorage.getItem(STORAGE_CURRENT_LEVEL);
-      const savedUnlockedLevel = await AsyncStorage.getItem(STORAGE_UNLOCKED_LEVEL);
-
-      const parsedCurrent = savedCurrentLevel ? Number(savedCurrentLevel) : 1;
-      const parsedUnlocked = savedUnlockedLevel ? Number(savedUnlockedLevel) : 1;
-
-      const safeCurrent = Number.isFinite(parsedCurrent)
-        ? Math.min(Math.max(parsedCurrent, 1), TOTAL_LEVELS)
-        : 1;
-
-      const safeUnlocked = Number.isFinite(parsedUnlocked)
-        ? Math.min(Math.max(parsedUnlocked, 1), TOTAL_LEVELS)
-        : 1;
-
-      setCurrentLevel(safeCurrent);
-      setUnlockedLevel(safeUnlocked);
-      setStep('intro');
-      setQIndex(0);
-      setScores({ ...EMPTY_SCORES });
-      setResults([]);
-      setCorrectAnswers(0);
-      setSelectedAnswerIndex(null);
-    } finally {
-      setIsReady(true);
-    }
-  }, []);
-
   useFocusEffect(
     useCallback(() => {
-      setIsReady(false);
-      loadProgress();
-    }, [loadProgress])
+      setStep('intro');
+      setCurrentLevel(1);
+      setQuestions([]);
+      setQIndex(0);
+      setCorrectAnswers(0);
+      setSelectedAnswerIndex(null);
+    }, [])
   );
 
-  const persistLevels = async (nextCurrentLevel: number, nextUnlockedLevel: number) => {
-    await AsyncStorage.setItem(STORAGE_CURRENT_LEVEL, String(nextCurrentLevel));
-    await AsyncStorage.setItem(STORAGE_UNLOCKED_LEVEL, String(nextUnlockedLevel));
-    setCurrentLevel(nextCurrentLevel);
-    setUnlockedLevel(nextUnlockedLevel);
-  };
+  const currentQ = questions[qIndex];
 
-  const startLevel = () => {
-    setStep('question');
+  const progressPercent = useMemo(() => {
+    return questions.length > 0 ? ((qIndex + 1) / questions.length) * 100 : 0;
+  }, [qIndex, questions.length]);
+
+  const passedLevel = correctAnswers > QUESTIONS_PER_LEVEL / 2;
+  const isLastLevel = currentLevel >= TOTAL_LEVELS;
+
+  const startLevel = (level: number) => {
+    const levelQuestions = generateLevelQuestions(level);
+    setCurrentLevel(level);
+    setQuestions(levelQuestions);
     setQIndex(0);
-    setScores({ ...EMPTY_SCORES });
-    setResults([]);
     setCorrectAnswers(0);
     setSelectedAnswerIndex(null);
+    setStep('question');
   };
 
-  const handleSelectAnswer = (optionIndex: number, tag: QuizTag) => {
-    if (selectedAnswerIndex !== null) return;
+  const handleSelectAnswer = (optionIndex: number) => {
+    if (selectedAnswerIndex !== null || !currentQ) return;
 
     setSelectedAnswerIndex(optionIndex);
 
-    if (optionIndex === correctOptionIndex) {
+    if (optionIndex === currentQ.correctOptionIndex) {
       setCorrectAnswers((prev) => prev + 1);
     }
-
-    setScores((prev) => ({
-      ...prev,
-      [tag]: prev[tag] + 1,
-    }));
   };
 
-  const handleNextQuestion = async () => {
+  const handleNextQuestion = () => {
     if (selectedAnswerIndex === null) return;
 
-    if (qIndex < levelQuestions.length - 1) {
+    if (qIndex < questions.length - 1) {
       setQIndex((prev) => prev + 1);
       setSelectedAnswerIndex(null);
       return;
     }
 
-    const passed = correctAnswers >= 3;
-    const nextResults = getWaterfallsByTags(scores);
-
-    setResults(nextResults);
     setStep('results');
+  };
 
-    if (passed) {
-      const nextUnlocked = Math.min(Math.max(unlockedLevel, currentLevel + 1), TOTAL_LEVELS);
-      const nextCurrent = currentLevel < TOTAL_LEVELS ? currentLevel + 1 : currentLevel;
-      await persistLevels(nextCurrent, nextUnlocked);
-    } else {
-      await persistLevels(currentLevel, unlockedLevel);
+  const goToNextLevel = () => {
+    if (isLastLevel) {
+      setStep('intro');
+      setCurrentLevel(1);
+      setQuestions([]);
+      setQIndex(0);
+      setCorrectAnswers(0);
+      setSelectedAnswerIndex(null);
+      return;
     }
+
+    startLevel(currentLevel + 1);
+  };
+
+  const tryAgain = () => {
+    startLevel(currentLevel);
+  };
+
+  const backToStart = () => {
+    setStep('intro');
+    setCurrentLevel(1);
+    setQuestions([]);
+    setQIndex(0);
+    setCorrectAnswers(0);
+    setSelectedAnswerIndex(null);
   };
 
   const getOptionStyle = (index: number) => {
+    if (!currentQ) return styles.option;
     if (selectedAnswerIndex === null) return styles.option;
 
-    if (index === correctOptionIndex) {
+    if (index === currentQ.correctOptionIndex) {
       return [styles.option, styles.optionCorrect];
     }
 
-    if (index === selectedAnswerIndex && index !== correctOptionIndex) {
+    if (index === selectedAnswerIndex && index !== currentQ.correctOptionIndex) {
       return [styles.option, styles.optionWrong];
     }
 
@@ -189,49 +173,15 @@ export default function QuizScreen() {
   };
 
   const getOptionTextStyle = (index: number) => {
+    if (!currentQ) return styles.optionText;
     if (selectedAnswerIndex === null) return styles.optionText;
 
-    if (index === correctOptionIndex || index === selectedAnswerIndex) {
+    if (index === currentQ.correctOptionIndex || index === selectedAnswerIndex) {
       return [styles.optionText, styles.optionTextActive];
     }
 
     return [styles.optionText, styles.optionTextDimmed];
   };
-
-  const resetToCurrentLevelIntro = () => {
-    setStep('intro');
-    setQIndex(0);
-    setScores({ ...EMPTY_SCORES });
-    setResults([]);
-    setCorrectAnswers(0);
-    setSelectedAnswerIndex(null);
-  };
-
-  const goToNextLevel = () => {
-    if (currentLevel > TOTAL_LEVELS) return;
-    resetToCurrentLevelIntro();
-  };
-
-  const retakeLevel = async () => {
-    await persistLevels(currentLevel > unlockedLevel ? unlockedLevel : currentLevel, unlockedLevel);
-    resetToCurrentLevelIntro();
-  };
-
-  if (!isReady) {
-    return (
-      <View style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <Image
-          source={require('../assets/images/bg.png')}
-          style={styles.bg}
-          resizeMode="cover"
-        />
-        <View style={styles.loaderWrap}>
-          <ActivityIndicator size="large" color={colors.accent} />
-        </View>
-      </View>
-    );
-  }
 
   if (step === 'intro') {
     return (
@@ -248,11 +198,9 @@ export default function QuizScreen() {
           contentContainerStyle={styles.introScroll}
         >
           <View style={styles.introCenter}>
-            <Text style={styles.levelBadge}>Level {currentLevel}</Text>
+            <Text style={styles.topTitle}>Quiz Challenge</Text>
 
-            <Text style={styles.introText}>
-              Take the quiz and find out{'\n'}which location suits you best!
-            </Text>
+            <Text style={styles.levelBadge}>10 Levels</Text>
 
             <Image
               source={require('../assets/images/guide_quiz.png')}
@@ -260,12 +208,17 @@ export default function QuizScreen() {
               resizeMode="contain"
             />
 
+            <Text style={styles.introText}>
+              Answer 5 questions on each level.{'\n'}
+              More than half correct = next level.
+            </Text>
+
             <TouchableOpacity
               style={styles.greenBtn}
               activeOpacity={0.9}
-              onPress={startLevel}
+              onPress={() => startLevel(1)}
             >
-              <Text style={styles.btnText}>Start level</Text>
+              <Text style={styles.btnText}>Start</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -285,16 +238,11 @@ export default function QuizScreen() {
 
         <View style={styles.progressWrap}>
           <View style={styles.progressBar}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${progressPercent}%` },
-              ]}
-            />
+            <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
           </View>
 
           <Text style={styles.progressText}>
-            {qIndex + 1} / {levelQuestions.length}
+            {qIndex + 1} / {questions.length}
           </Text>
         </View>
 
@@ -317,11 +265,11 @@ export default function QuizScreen() {
           <View style={styles.optionsWrap}>
             {currentQ.options.map((opt, index) => (
               <TouchableOpacity
-                key={`${currentQ.id}-${opt.label}`}
+                key={`${currentQ.id}-${opt.label}-${index}`}
                 style={getOptionStyle(index)}
                 activeOpacity={0.9}
                 disabled={selectedAnswerIndex !== null}
-                onPress={() => handleSelectAnswer(index, opt.tag)}
+                onPress={() => handleSelectAnswer(index)}
               >
                 <Text style={getOptionTextStyle(index)}>{opt.label}</Text>
               </TouchableOpacity>
@@ -335,7 +283,7 @@ export default function QuizScreen() {
               onPress={handleNextQuestion}
             >
               <Text style={styles.btnText}>
-                {qIndex === levelQuestions.length - 1 ? 'Show result' : 'Next'}
+                {qIndex === questions.length - 1 ? 'Show result' : 'Next'}
               </Text>
             </TouchableOpacity>
           )}
@@ -343,9 +291,6 @@ export default function QuizScreen() {
       </View>
     );
   }
-
-  const passedLevel = correctAnswers >= 3;
-  const hasNextLevel = currentLevel <= TOTAL_LEVELS - 1;
 
   return (
     <View style={styles.container}>
@@ -356,82 +301,80 @@ export default function QuizScreen() {
         resizeMode="cover"
       />
 
-      <FlatList
-        data={results}
-        keyExtractor={(item) => item.id}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.resultsContent}
-        ListHeaderComponent={
-          <View style={styles.resultsHeader}>
-            <Text style={styles.levelBadge}>Level {currentLevel}</Text>
+        contentContainerStyle={styles.resultsScroll}
+      >
+        <View style={styles.resultCard}>
+          <Text style={styles.resultLevel}>Level {currentLevel}</Text>
 
-            <Image
-              source={require('../assets/images/guide_quiz.png')}
-              style={styles.guideSmall}
-              resizeMode="contain"
-            />
+          <Image
+            source={require('../assets/images/guide_quiz.png')}
+            style={styles.resultGuide}
+            resizeMode="contain"
+          />
 
-            <Text style={styles.resultsTitle}>
-              {passedLevel
-                ? `Level passed! Correct answers: ${correctAnswers}/${levelQuestions.length}`
-                : `Level failed. Correct answers: ${correctAnswers}/${levelQuestions.length}`}
-            </Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            activeOpacity={0.9}
-            onPress={() =>
-              navigation.navigate('WaterfallDetail', {
-                waterfallId: item.id,
-              })
-            }
-          >
-            <Image source={item.image} style={styles.cardImg} resizeMode="cover" />
+          <Text style={styles.resultEmoji}>
+            {passedLevel ? '🎉' : '✨'}
+          </Text>
 
-            <View style={styles.cardText}>
-              <Text style={styles.cardName}>{item.name}</Text>
-              <Text style={styles.cardDesc} numberOfLines={2}>
-                {item.description}
-              </Text>
+          <Text style={styles.resultTitle}>
+            {passedLevel ? 'Great result!' : 'Try again'}
+          </Text>
+
+          <Text style={styles.resultScore}>
+            {correctAnswers} / {QUESTIONS_PER_LEVEL}
+          </Text>
+
+          <Text style={styles.resultSubtitle}>
+            {passedLevel
+              ? isLastLevel
+                ? 'You completed all 10 levels.'
+                : 'You answered more than half correctly and unlocked the next level.'
+              : 'You need more than half correct answers to move on.'}
+          </Text>
+
+          <View style={styles.resultStatsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statLabel}>Correct</Text>
+              <Text style={styles.statValue}>{correctAnswers}</Text>
             </View>
-          </TouchableOpacity>
-        )}
-        ListFooterComponent={
-          <View style={styles.footerButtons}>
-            <TouchableOpacity
-              style={styles.shareBtn}
-              activeOpacity={0.9}
-              onPress={() =>
-                Share.share({
-                  message: `Level ${currentLevel}\nCorrect: ${correctAnswers}/${levelQuestions.length}\nMy top picks:\n${results.map((w) => w.name).join('\n')}`,
-                })
-              }
-            >
-              <Text style={styles.btnText}>📤 Share</Text>
-            </TouchableOpacity>
 
-            {passedLevel && hasNextLevel ? (
-              <TouchableOpacity
-                style={styles.nextLevelBtn}
-                activeOpacity={0.9}
-                onPress={goToNextLevel}
-              >
-                <Text style={styles.btnText}>Next level</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <TouchableOpacity
-              style={styles.outlineBtn}
-              activeOpacity={0.9}
-              onPress={retakeLevel}
-            >
-              <Text style={styles.btnText}>Restart level</Text>
-            </TouchableOpacity>
+            <View style={styles.statBox}>
+              <Text style={styles.statLabel}>Wrong</Text>
+              <Text style={styles.statValue}>{QUESTIONS_PER_LEVEL - correctAnswers}</Text>
+            </View>
           </View>
-        }
-      />
+
+          {passedLevel ? (
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              activeOpacity={0.9}
+              onPress={goToNextLevel}
+            >
+              <Text style={styles.btnText}>
+                {isLastLevel ? 'Back to start' : 'Next level'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              activeOpacity={0.9}
+              onPress={tryAgain}
+            >
+              <Text style={styles.btnText}>Try again</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            activeOpacity={0.9}
+            onPress={backToStart}
+          >
+            <Text style={styles.secondaryBtnText}>First page</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -448,52 +391,47 @@ const styles = StyleSheet.create({
     height,
   },
 
-  loaderWrap: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
   introScroll: {
     flexGrow: 1,
-    paddingBottom: isVerySmall ? 120 : 130,
+    paddingBottom: isVerySmall ? 110 : 120,
   },
 
   introCenter: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: isVerySmall ? 18 : 24,
     paddingTop:
       Platform.OS === 'ios'
         ? isVerySmall
-          ? 92
+          ? 70
           : isSmall
-          ? 102
-          : 112
+          ? 80
+          : 90
         : isVerySmall
-        ? 80
+        ? 60
         : isSmall
-        ? 90
-        : 100,
+        ? 70
+        : 80,
+  },
+
+  topTitle: {
+    color: colors.white,
+    fontSize: isVerySmall ? 24 : 28,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 12,
   },
 
   levelBadge: {
     color: colors.white,
     fontSize: isVerySmall ? 13 : 14,
     fontWeight: '700',
-    marginBottom: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 16,
+    marginBottom: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
     backgroundColor: colors.whiteAlpha10,
-  },
-
-  levelSmallBadge: {
-    color: colors.white,
-    fontSize: isVerySmall ? 12 : 13,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 10,
   },
 
   introText: {
@@ -501,50 +439,27 @@ const styles = StyleSheet.create({
     fontSize: isVerySmall ? 15 : 17,
     textAlign: 'center',
     fontWeight: '600',
-    lineHeight: isVerySmall ? 23 : 26,
-    marginBottom: isVerySmall ? 16 : 20,
+    lineHeight: isVerySmall ? 22 : 25,
+    marginTop: 8,
+    marginBottom: 22,
   },
 
   guide: {
     width: isVerySmall ? 220 : isSmall ? 240 : 260,
-    height: isVerySmall ? 280 : isSmall ? 305 : 330,
-    marginBottom: isVerySmall ? 16 : 20,
-  },
-
-  guideSmall: {
-    width: isVerySmall ? 100 : 120,
-    height: isVerySmall ? 128 : 150,
-    alignSelf: 'flex-end',
+    height: isVerySmall ? 250 : isSmall ? 280 : 310,
     marginBottom: 10,
   },
 
   greenBtn: {
     backgroundColor: colors.accent,
-    borderRadius: 24,
-    paddingVertical: isVerySmall ? 12 : 14,
-    paddingHorizontal: isVerySmall ? 42 : 50,
-    marginTop: 8,
-  },
-
-  nextBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: 24,
-    paddingVertical: isVerySmall ? 12 : 14,
-    alignItems: 'center',
-    marginTop: 16,
-    marginBottom: isVerySmall ? 100 : 110,
-  },
-
-  nextLevelBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: 24,
-    alignItems: 'center',
-    paddingVertical: isVerySmall ? 12 : 13,
+    borderRadius: 26,
+    paddingVertical: isVerySmall ? 13 : 15,
+    paddingHorizontal: isVerySmall ? 44 : 56,
   },
 
   btnText: {
     color: colors.white,
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: isVerySmall ? 14 : 15,
   },
 
@@ -594,21 +509,36 @@ const styles = StyleSheet.create({
     paddingBottom: isVerySmall ? 110 : 120,
   },
 
+  levelSmallBadge: {
+    color: colors.white,
+    fontSize: isVerySmall ? 12 : 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+
+  guideSmall: {
+    width: isVerySmall ? 100 : 120,
+    height: isVerySmall ? 128 : 150,
+    alignSelf: 'flex-end',
+    marginBottom: 10,
+  },
+
   questionBox: {
     borderWidth: 1.5,
     borderColor: colors.whiteAlpha50,
-    borderRadius: 16,
-    paddingVertical: isVerySmall ? 18 : 20,
+    borderRadius: 20,
+    paddingVertical: isVerySmall ? 18 : 22,
     paddingHorizontal: isVerySmall ? 16 : 20,
     marginBottom: isVerySmall ? 16 : 20,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
 
   questionText: {
     color: colors.white,
     fontSize: isVerySmall ? 15 : 17,
     textAlign: 'center',
-    fontWeight: '600',
+    fontWeight: '700',
     lineHeight: isVerySmall ? 22 : 25,
   },
 
@@ -654,84 +584,133 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
 
-  resultsContent: {
-    paddingHorizontal: isVerySmall ? 12 : 16,
+  nextBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 24,
+    paddingVertical: isVerySmall ? 12 : 14,
+    alignItems: 'center',
+    marginTop: 18,
+    marginBottom: isVerySmall ? 100 : 110,
+  },
+
+  resultsScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: isVerySmall ? 18 : 24,
     paddingTop:
       Platform.OS === 'ios'
         ? isVerySmall
-          ? 80
+          ? 70
           : isSmall
-          ? 90
-          : 100
+          ? 80
+          : 90
         : isVerySmall
-        ? 68
+        ? 60
         : isSmall
-        ? 78
-        : 88,
+        ? 70
+        : 80,
     paddingBottom: isVerySmall ? 110 : 120,
   },
 
-  resultsHeader: {
+  resultCard: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    paddingHorizontal: isVerySmall ? 18 : 24,
+    paddingVertical: isVerySmall ? 22 : 28,
+    alignItems: 'center',
+  },
+
+  resultLevel: {
+    color: colors.whiteAlpha80,
+    fontSize: isVerySmall ? 13 : 14,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+
+  resultGuide: {
+    width: isVerySmall ? 110 : 130,
+    height: isVerySmall ? 120 : 145,
     marginBottom: 8,
   },
 
-  resultsTitle: {
+  resultEmoji: {
+    fontSize: isVerySmall ? 34 : 40,
+    marginBottom: 8,
+  },
+
+  resultTitle: {
     color: colors.white,
-    fontSize: isVerySmall ? 15 : 16,
-    fontWeight: '600',
+    fontSize: isVerySmall ? 24 : 28,
+    fontWeight: '800',
     textAlign: 'center',
-    marginVertical: 12,
-    lineHeight: isVerySmall ? 21 : 24,
+    marginBottom: 8,
   },
 
-  card: {
-    flexDirection: 'row',
-    backgroundColor: colors.whiteAlpha10,
-    borderRadius: 12,
+  resultScore: {
+    color: colors.accent,
+    fontSize: isVerySmall ? 34 : 40,
+    fontWeight: '900',
     marginBottom: 10,
-    overflow: 'hidden',
   },
 
-  cardImg: {
-    width: isVerySmall ? 82 : 90,
-    height: isVerySmall ? 72 : 75,
-  },
-
-  cardText: {
-    flex: 1,
-    padding: isVerySmall ? 9 : 10,
-    justifyContent: 'center',
-  },
-
-  cardName: {
-    color: colors.white,
-    fontSize: isVerySmall ? 13 : 14,
-    fontWeight: '700',
-  },
-
-  cardDesc: {
+  resultSubtitle: {
     color: colors.whiteAlpha80,
-    fontSize: isVerySmall ? 11 : 12,
-    marginTop: 4,
+    fontSize: isVerySmall ? 14 : 15,
+    textAlign: 'center',
+    lineHeight: isVerySmall ? 21 : 23,
+    marginBottom: 20,
   },
 
-  footerButtons: {
-    gap: 10,
-    marginTop: 8,
+  resultStatsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
   },
 
-  shareBtn: {
+  statBox: {
+    flex: 1,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: isVerySmall ? 14 : 16,
+    alignItems: 'center',
+  },
+
+  statLabel: {
+    color: colors.whiteAlpha80,
+    fontSize: isVerySmall ? 12 : 13,
+    marginBottom: 4,
+  },
+
+  statValue: {
+    color: colors.white,
+    fontSize: isVerySmall ? 20 : 22,
+    fontWeight: '800',
+  },
+
+  primaryBtn: {
+    width: '100%',
     backgroundColor: colors.accent,
     borderRadius: 24,
     alignItems: 'center',
-    paddingVertical: isVerySmall ? 12 : 13,
+    paddingVertical: isVerySmall ? 13 : 14,
+    marginBottom: 10,
   },
 
-  outlineBtn: {
+  secondaryBtn: {
+    width: '100%',
+    borderRadius: 24,
+    alignItems: 'center',
+    paddingVertical: isVerySmall ? 13 : 14,
     borderWidth: 1.5,
     borderColor: colors.whiteAlpha30,
-    borderRadius: 24,
-    paddingVertical: isVerySmall ? 12 : 13,
-    alignItems: 'center',
+  },
+
+  secondaryBtnText: {
+    color: colors.white,
+    fontSize: isVerySmall ? 14 : 15,
+    fontWeight: '700',
   },
 });
