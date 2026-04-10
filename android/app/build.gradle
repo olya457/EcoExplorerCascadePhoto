@@ -77,9 +77,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.ecoexplorer.cascade.photo"
+    namespace "com.ecoexplorercascadenature"
     defaultConfig {
-        applicationId "com.ecoexplorer.cascade.photo"
+        applicationId "com.ecoexplorercascadenature"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

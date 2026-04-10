@@ -1,4 +1,4 @@
-package com.ecoexplorer.cascade.photo
+package com.ecoexplorercascadenature
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

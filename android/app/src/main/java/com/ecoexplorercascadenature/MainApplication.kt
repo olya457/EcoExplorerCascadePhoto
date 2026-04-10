@@ -1,4 +1,4 @@
-package com.ecoexplorer.cascade.photo
+package com.ecoexplorercascadenature
 
 import android.app.Application
 import com.facebook.react.PackageList
