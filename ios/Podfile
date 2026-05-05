@@ -31,5 +31,21 @@ target 'EcoExplorerCascadePhoto' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Xcode 26.4's AppleClang is stricter about fmt 11.0.2 consteval checks.
+    # React Native 0.78 builds fmt from source, so patch the generated Pod header.
+    fmt_base_header = File.join(installer.sandbox.pod_dir('fmt'), 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base_header)
+      contents = File.read(fmt_base_header)
+      patched = contents.gsub(
+        /^#\s*define\s+FMT_USE_CONSTEVAL\s+1$/,
+        '#  define FMT_USE_CONSTEVAL 0'
+      )
+      if patched != contents
+        File.chmod(0644, fmt_base_header)
+        File.write(fmt_base_header, patched)
+        Pod::UI.puts 'Patched fmt to disable FMT_USE_CONSTEVAL for Xcode 26.4+'.yellow
+      end
+    end
   end
 end
